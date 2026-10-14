@@ -1543,17 +1543,6 @@ export default class paradex extends Exchange {
     async retrieveAccount (): Promise<Dict> {
         const cachedAccount = this.safeDict (this.options, 'paradexAccount');
         if (cachedAccount !== undefined) {
-            if (this.safeString (cachedAccount, 'publicKey') === undefined) {
-                if (this.safeString (cachedAccount, 'privateKey') === undefined) {
-                    throw new AuthenticationError (this.id + ' retrieveAccount() requires options["paradexAccount"]["privateKey"]');
-                }
-                // the public key is needed to authenticate (it selects the main key or a subkey), derive it from the private key
-                const accountWithPublicKey = this.extend (cachedAccount, {
-                    'publicKey': this.retrieveStarkPublicKey (this.safeString (cachedAccount, 'privateKey')),
-                });
-                this.options['paradexAccount'] = accountWithPublicKey;
-                return accountWithPublicKey;
-            }
             return cachedAccount;
         }
         this.checkRequiredCredentials ();
@@ -1660,8 +1649,13 @@ export default class paradex extends Exchange {
         };
         const msg = this.starknetEncodeStructuredData (domain, messageTypes, req, this.safeString (account, 'address'));
         const signature = this.starknetSign (msg, account['privateKey']);
+        let publicKey = this.safeString (account, 'publicKey');
+        if (publicKey === undefined) {
+            // options['paradexAccount'] may omit the public key, derive it from the private key that signed
+            publicKey = this.retrieveStarkPublicKey (account['privateKey']);
+        }
         const request: Dict = {
-            'public_key': this.safeString (account, 'publicKey'), // authenticates with this key, so registered subkeys can log in too
+            'public_key': publicKey, // authenticates with this key, so registered subkeys can log in too
             'signature': signature,
             'account': this.safeString (account, 'address'),
             'timestamp': req['timestamp'],
