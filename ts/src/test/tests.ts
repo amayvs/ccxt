@@ -2471,10 +2471,6 @@ class testMainClass {
             const results = methods[method];
             for (let j = 0; j < results.length; j++) {
                 const result = results[j];
-                const oldExchangeOptions = exchange.options; // snapshot options;
-                const testExchangeOptions = exchange.safeValue (result, 'options', {});
-                // exchange.options = exchange.deepExtend (oldExchangeOptions, testExchangeOptions); // custom options to be used in the tests
-                exchange.extendExchangeOptions (exchange.deepExtend (oldExchangeOptions, testExchangeOptions));
                 const description = exchange.safeValue (result, 'description');
                 if ((testName !== undefined) && (testName !== description)) {
                     continue;
@@ -2503,6 +2499,12 @@ class testMainClass {
                 if ((isDisabledJava === true) && (this.lang === 'java')) {
                     continue;
                 }
+                // apply the per-test options only to tests that run: in ports where exchange.options is shared
+                // by reference (go) a skipped test would otherwise leak its options into the next ones
+                const oldExchangeOptions = exchange.options; // snapshot options;
+                const testExchangeOptions = exchange.safeValue (result, 'options', {});
+                // exchange.options = exchange.deepExtend (oldExchangeOptions, testExchangeOptions); // custom options to be used in the tests
+                exchange.extendExchangeOptions (exchange.deepExtend (oldExchangeOptions, testExchangeOptions));
                 const type = exchange.safeString (exchangeData, 'outputType');
                 const skipKeys = this.effectiveSkipKeys (exchange, exchangeData, result);
                 await this.testRequestStatically (exchange, method, result, type, skipKeys);
