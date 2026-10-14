@@ -14,7 +14,7 @@ Paradex publishes two official SDKs: [`tradeparadex/paradex-py`](https://github.
 
 ## TL;DR
 
-- **Pick `paradex-py` or `@paradex/sdk`** if Paradex is your only venue, you want request/response shapes that match Paradex's reference exactly, or you need something CCXT does not do — L2-only subkey auth and the threaded WebSocket client are the two concrete examples.
+- **Pick `paradex-py` or `@paradex/sdk`** if Paradex is your only venue, you want request/response shapes that match Paradex's reference exactly, or you need something CCXT does not do — the threaded WebSocket client is the concrete example.
 - **Pick CCXT** if you want Paradex as one venue among many: 55 unified capabilities (32 of them `fetch*`), perps **and** options, ten `watch*` methods, and the same code in TypeScript, JavaScript, Python, PHP, C#/.NET, Go, Java or Rust.
 - **The signing is the same either way.** CCXT does the L1 EIP-712 signature, derives the Starknet account, onboards, caches the JWT and refreshes it before expiry — so the trade-off is API shape and portability, not cryptography.
 
@@ -28,10 +28,10 @@ Paradex publishes two official SDKs: [`tradeparadex/paradex-py`](https://github.
 | Unified market data + trading API | yes — same method names across every exchange | no — Paradex's own request/response shapes |
 | Unified capabilities implemented | 55 for `paradex`, of which 32 are `fetch*` | n/a |
 | Symbols | `'BTC/USD:USDC'`, options as `'BTC/USD:USDC-117000-P'` | `BTC-USD-PERP` |
-| Auth | L1 key derives the Starknet account; JWT cached and refreshed automatically | same, plus an L2-only `ParadexSubkey` path |
-| L2-only (subkey) credentials | no — CCXT needs `walletAddress` + L1 `privateKey` | yes — `ParadexSubkey(l2_private_key, l2_address)` |
+| Auth | L1 key derives the Starknet account, or L2 key + account address directly; JWT cached and refreshed automatically | same |
+| L2-only (subkey) credentials | yes — `walletAddress` = Paradex account address, `privateKey` = L2 (or subkey) private key | yes — `ParadexSubkey(l2_private_key, l2_address)` |
 | WebSockets | yes — 10 `watch*` methods | yes — async and threaded clients, plus an SBE market-data example |
-| Raw endpoint access | yes — 127 endpoints as implicit methods | whatever the SDK wraps |
+| Raw endpoint access | yes — 128 endpoints as implicit methods | whatever the SDK wraps |
 | Built-in rate limiter | yes, per-endpoint weights, on by default (`rateLimit` 50 ms) | not a documented feature |
 | Unified error types | yes — 41 typed exceptions in one hierarchy | HTTP status plus Paradex error payloads |
 | Testnet | `set_sandbox_mode(True)` swaps REST and WS URLs | `Environment.TESTNET` / `PROD` / `NIGHTLY` |
@@ -244,7 +244,7 @@ exchange.set_sandbox_mode(True)   # swaps in Paradex's testnet REST and WS URLs
 
 ### Nothing is hidden — the implicit API
 
-Alongside the 55 unified capabilities, **all 127 endpoints in the API definition are generated as callable implicit methods**, with authentication, rate-limit accounting and error mapping applied:
+Alongside the 55 unified capabilities, **all 128 endpoints in the API definition are generated as callable implicit methods**, with authentication, rate-limit accounting and error mapping applied:
 
 ```python
 # any raw Paradex endpoint, camelCased from its path
@@ -255,16 +255,15 @@ Browse them on the [paradex implicit API page](/docs/exchanges/paradex/implicit-
 
 ## What the official Paradex SDKs do better
 
-An honest list, and the first two are real capability gaps:
+An honest list, and the first one is a real capability gap:
 
-- **L2-only subkey authentication.** `paradex-py` ships `ParadexSubkey`, which takes only an L2 private key and address — you never hand the SDK your L1 Ethereum key. CCXT's `paradex` requires `walletAddress` and the L1 `privateKey` and derives the Starknet account itself. If your operational policy is that the L1 key never leaves a hardware wallet, the SDK is the option that fits.
 - **A threaded WebSocket client.** `paradex-py` offers both an async client and a synchronous threaded wrapper, and its README has a table for choosing between them. CCXT Pro is async-only. If you are wiring streams into a synchronous codebase, that wrapper saves real work.
 - **First-party and first to change.** Paradex writes the API and the SDKs. New endpoints and parameters land there first; CCXT's implicit API usually closes the gap on day one, but a *unified* wrapper can lag.
 - **Examples for things a general library will not cover.** The repository ships worked examples for SBE market data, TWAP orders, L2 USDC transfers, server-derived addresses, EVM onboarding and a public-versus-direct WebSocket latency comparison.
 - **`@paradex/sdk` covers browser wallet flows.** For a front end, a JavaScript SDK that talks to an injected wallet is doing a job CCXT does not attempt. Its 41.7k monthly npm installs reflect that.
 - **Field names match the Paradex docs exactly.** `BTC-USD-PERP`, `instruction="POST_ONLY"`, `limit_price` — one less hop when debugging with the vendor reference open.
 
-If Paradex is your only venue, you want subkey auth, or you need a synchronous stream client, the official SDKs are the better fit.
+If Paradex is your only venue or you need a synchronous stream client, the official SDKs are the better fit.
 
 ## Migrating from a Paradex SDK to CCXT
 
@@ -301,7 +300,7 @@ Start with [Install](/docs/install), then the [Manual](/docs/manual), then the [
 Yes. Give it `walletAddress` and `privateKey` (your L1 Ethereum credentials) and CCXT signs the EIP-712 `STARK Key` message, derives the Starknet account, onboards it, obtains the JWT, caches it and refreshes it before it expires. Paradex's JWTs expire every five minutes and cannot be extended, so this is not a one-off setup step.
 
 **Can I use CCXT with a Paradex subkey (L2-only credentials)?**
-No. CCXT's `paradex` class requires the L1 wallet address and private key. `paradex-py`'s `ParadexSubkey` class supports L2-only credentials; if that is a requirement, use the official SDK for that path.
+Yes. Set `walletAddress` to the Paradex (Starknet) account address and `privateKey` to the L2 private key — the account's own L2 key or a registered subkey's. CCXT detects the Starknet address, skips the L1 derivation and signs in with that key's public key, so the L1 Ethereum key never has to be handed over. Onboarding still needs the L1 credentials.
 
 **Does CCXT support Paradex options?**
 Yes. Options markets are loaded alongside perpetuals in the same `paradex` instance, with symbols like `'BTC/USD:USDC-117000-P'`, and `fetch_greeks` / `fetch_all_greeks` are implemented.
