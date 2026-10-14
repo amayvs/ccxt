@@ -44,6 +44,16 @@ func starknetSign(msgHash, privKey *big.Int) (r, s *big.Int, err error) {
 	return r, s, err
 }
 
+// starknetPublicKey returns the stark public key (x coordinate of privKey*G) as
+// 0x-prefixed lowercase hex without leading zeros, matching getStarkKey.
+func starknetPublicKey(privKey *big.Int) string {
+	var pub starkcurve.G1Affine
+	pub.ScalarMultiplicationBase(privKey)
+	var x big.Int
+	pub.X.BigInt(&x)
+	return "0x" + x.Text(16)
+}
+
 // starknetPoseidonArray is the poseidon hash of a felt array (poseidon_hash_many).
 func starknetPoseidonArray(felts ...*starkfelt.Felt) *starkfelt.Felt {
 	return junocrypto.PoseidonArray(felts...)
