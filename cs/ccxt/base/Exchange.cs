@@ -488,7 +488,8 @@ public partial class BaseExchange
             var api = endpointInfo["api"];
             var cost = endpointInfo["cost"] != null ? endpointInfo["cost"] : 1;
 
-            var res = await this.fetch2(path, api, method, parameters, new dict { { "cost", cost } });
+            // go through request () like the other ports, so exchange overrides of request () apply to implicit calls too
+            var res = await this.request(path, api, method, parameters, new dict { { "cost", cost } });
             return res;
 
         }
