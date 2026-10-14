@@ -1711,7 +1711,7 @@ class BaseExchange {
 
     public function starknet_sign($msg_hash, $pri) {
         # // TODO: unify to ecdsa
-        $signature = Curve::sign('0x' . $pri, $msg_hash);
+        $signature = Curve::sign('0x' . $this->remove0x_prefix($pri), $msg_hash);
         return $this->json($signature);
     }
 
