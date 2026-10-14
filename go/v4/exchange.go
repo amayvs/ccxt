@@ -1384,6 +1384,16 @@ func (this *BaseExchange) RetrieveStarkAccount(sig any, account any, hash any) a
 	return nil // to do
 }
 
+func (this *BaseExchange) RetrieveStarkPublicKey(privateKey any) string {
+	// private keys are always hex, with or without the 0x prefix
+	text := strings.TrimPrefix(strings.TrimPrefix(strings.TrimSpace(ToString(privateKey)), "0x"), "0X")
+	privKey, ok := new(big.Int).SetString(text, 16)
+	if !ok || privKey.Sign() <= 0 {
+		panic(AuthenticationError(Add(this.Id, " retrieveStarkPublicKey() invalid privateKey")))
+	}
+	return starknetPublicKey(privKey)
+}
+
 func (this *BaseExchange) StarknetEncodeStructuredData(a any, b any, c any, d any) any {
 	return nil // to do
 }

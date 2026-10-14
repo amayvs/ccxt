@@ -1376,6 +1376,11 @@ impl Exchange {
         Value::Null
     }
 
+    /// `retrieveStarkPublicKey(privateKey)` — stark public key of a stark private key.
+    pub fn retrieve_stark_public_key(&self, _private_key: Value) -> Value {
+        self.crypto_not_supported("retrieveStarkPublicKey")
+    }
+
     /// `starknetEncodeStructuredData(domain, messageTypes, messageData, address)`.
     pub fn starknet_encode_structured_data(
         &self,

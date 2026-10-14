@@ -1590,6 +1590,11 @@ class BaseExchange(object):
         return address_hex
 
     @staticmethod
+    def retrieve_stark_public_key(privateKey):
+        from ccxt.static_dependencies.starknet.hash.utils import private_to_stark_key
+        return hex(private_to_stark_key(int(privateKey, 16)))
+
+    @staticmethod
     def retrieve_stark_account (signature, accountClassHash, accountProxyClassHash):
         from ccxt.static_dependencies.starknet.ccxt_utils import get_private_key_from_eth_signature
         from ccxt.static_dependencies.starknet.hash.utils import private_to_stark_key

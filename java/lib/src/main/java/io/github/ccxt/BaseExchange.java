@@ -3495,6 +3495,11 @@ public class BaseExchange {
     //     throw new RuntimeException("Not implemented");
     // }
 
+    public String retrieveStarkPublicKey(Object privateKey)
+    {
+        throw new NotSupported(this.id + " retrieveStarkPublicKey() is not supported in java yet, Starknet signing is not ported");
+    }
+
     public Object retrieveStarkAccount(Object signature, Object accountClassHash, Object accountProxyClassHash)
     {
         // Starknet signing is not ported to Java; keep the base's account-map shape with no keys set

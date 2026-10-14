@@ -2094,6 +2094,11 @@ export class BaseExchange {
         };
     }
 
+    retrieveStarkPublicKey (privateKey: any): string {
+        // the stark public key (x coordinate) of a stark private key, as 0x-prefixed lowercase hex without leading zeros
+        return getStarkKey (privateKey.replace ('0x', ''));
+    }
+
     starknetEncodeStructuredData (domain: any, messageTypes: any, messageData: any, address: any): string {
         const types = Object.keys (messageTypes);
         if (types.length > 1) {
