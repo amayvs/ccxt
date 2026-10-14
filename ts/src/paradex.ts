@@ -13,8 +13,10 @@ import { ecdsa } from './base/functions/crypto.js';
 
 /**
  * @class paradex
- * @description Paradex is a decentralized exchange built on the StarkWare layer 2 scaling solution. To access private methods you can either use the ETH public key and private key by setting (exchange.privateKey and exchange.walletAddress)
- * or alternatively you can provide the startknet private key and public key by setting exchange.options['paradexAccount'] with  add {"privateKey": A, "publicKey": B, "address": C}
+ * @description Paradex is a decentralized exchange built on the StarkWare layer 2 scaling solution. To access private methods you can either use the ETH private key and address by setting (exchange.privateKey and exchange.walletAddress),
+ * or the Paradex (StarkNet) private key and Paradex account address by setting exchange.privateKey to the stark private key and exchange.walletAddress to the Paradex account address (this also works with a registered subkey: use the subkey's private key and the main account address),
+ * or alternatively you can provide the starknet private key and account address by setting exchange.options['paradexAccount'] with {"privateKey": A, "address": C} (publicKey is derived when omitted),
+ * or a long-lived (e.g. read-only) API token by setting exchange.options['authToken'] without exchange.options['expires']
  * @augments Exchange
  */
 export default class paradex extends Exchange {
@@ -253,6 +255,7 @@ export default class paradex extends Exchange {
                         'account/tokens': { 'cost': 1 } as Endpoint<Dict>,
                         'algo/orders': { 'cost': 1 } as Endpoint<Dict>,
                         'auth': { 'cost': 1 } as Endpoint<Dict>,
+                        'auth/{public_key}': { 'cost': 1 } as Endpoint<Dict>,
                         'block-trades': { 'cost': 1 } as Endpoint<Dict>,
                         'block-trades/{block_trade_id}/execute': { 'cost': 1 } as Endpoint<Dict>,
                         'block-trades/{block_trade_id}/offers': { 'cost': 1 } as Endpoint<Dict>,
@@ -304,7 +307,7 @@ export default class paradex extends Exchange {
             'requiredCredentials': {
                 'apiKey': false,
                 'secret': false,
-                'walletAddress': true,
+                'walletAddress': false,
                 'privateKey': true,
             },
             'exceptions': {
@@ -400,7 +403,8 @@ export default class paradex extends Exchange {
             'commonCurrencies': {
             },
             'options': {
-                'paradexAccount': undefined, // add {"privateKey": "copy Paradex Private Key from UI", "publicKey": "used when onboard (optional)", "address": "copy Paradex Address from UI"}
+                'paradexAccount': undefined, // add {"privateKey": "copy Paradex Private Key from UI", "publicKey": "optional, derived from privateKey", "address": "copy Paradex Address from UI"}
+                'adjustForTimeDifference': false, // fetch the server time once before the first authentication and sign with server-adjusted timestamps
                 'broker': 'CCXT',
             },
             'features': {
@@ -1527,32 +1531,68 @@ export default class paradex extends Exchange {
         return domain;
     }
 
-    async retrieveAccount (): Promise<Dict> {
-        if (this.safeDict (this.options, 'paradexAccount') === undefined) {
-            this.checkRequiredCredentials ();
-            const systemConfig = await this.getSystemConfig ();
-            const domain = await this.prepareParadexDomain (true);
-            const messageTypes = {
-                'Constant': [
-                    { 'name': 'action', 'type': 'string' },
-                ],
-            };
-            const message = {
-                'action': 'STARK Key',
-            };
-            const msg = this.ethEncodeStructuredData (domain, messageTypes, message);
-            const signature = this.signMessage (msg, this.privateKey);
-            const account = this.retrieveStarkAccount (
-                signature,
-                this.safeString (systemConfig, 'paraclear_account_hash'),
-                this.safeString (systemConfig, 'paraclear_account_proxy_hash')
-            );
-            this.options['paradexAccount'] = account;
+    isStarknetAddress (address: Str): boolean {
+        // an ethereum address is exactly 20 bytes (40 hex chars), a starknet address is a felt of up to 64 hex chars
+        if (address === undefined) {
+            return false;
         }
-        return this.safeDict (this.options, 'paradexAccount', {});
+        const addressHex = this.remove0xPrefix (address);
+        return (addressHex.length > 40) && (addressHex.length <= 64);
+    }
+
+    async retrieveAccount (): Promise<Dict> {
+        const cachedAccount = this.safeDict (this.options, 'paradexAccount');
+        if (cachedAccount !== undefined) {
+            if (this.safeString (cachedAccount, 'publicKey') === undefined) {
+                if (this.safeString (cachedAccount, 'privateKey') === undefined) {
+                    throw new AuthenticationError (this.id + ' retrieveAccount() requires options["paradexAccount"]["privateKey"]');
+                }
+                // the public key is needed to authenticate (it selects the main key or a subkey), derive it from the private key
+                const accountWithPublicKey = this.extend (cachedAccount, {
+                    'publicKey': this.retrieveStarkPublicKey (this.safeString (cachedAccount, 'privateKey')),
+                });
+                this.options['paradexAccount'] = accountWithPublicKey;
+                return accountWithPublicKey;
+            }
+            return cachedAccount;
+        }
+        this.checkRequiredCredentials ();
+        if (this.isStarknetAddress (this.walletAddress)) {
+            // l2 credentials: privateKey is a stark private key (the main key or a registered subkey)
+            // and walletAddress is the paradex account address, nothing is derived from an ethereum key
+            const l2Account: Dict = {
+                'privateKey': this.privateKey,
+                'publicKey': this.retrieveStarkPublicKey (this.privateKey),
+                'address': this.walletAddress,
+            };
+            this.options['paradexAccount'] = l2Account;
+            return l2Account;
+        }
+        const systemConfig = await this.getSystemConfig ();
+        const domain = await this.prepareParadexDomain (true);
+        const messageTypes = {
+            'Constant': [
+                { 'name': 'action', 'type': 'string' },
+            ],
+        };
+        const message = {
+            'action': 'STARK Key',
+        };
+        const msg = this.ethEncodeStructuredData (domain, messageTypes, message);
+        const signature = this.signMessage (msg, this.privateKey);
+        const account = this.retrieveStarkAccount (
+            signature,
+            this.safeString (systemConfig, 'paraclear_account_hash'),
+            this.safeString (systemConfig, 'paraclear_account_proxy_hash')
+        );
+        this.options['paradexAccount'] = account;
+        return account;
     }
 
     async onboarding (params: Dict = {}): Promise<Dict> {
+        if ((this.walletAddress === undefined) || this.isStarknetAddress (this.walletAddress)) {
+            throw new ArgumentsRequired (this.id + ' onboarding() requires exchange.walletAddress to be the ethereum address that owns the account');
+        }
         const account = await this.retrieveAccount ();
         const req = {
             'action': 'Onboarding',
@@ -1572,20 +1612,34 @@ export default class paradex extends Exchange {
         return response;
     }
 
+    /**
+     * @method
+     * @name paradex#authenticateRest
+     * @description returns a JWT for the private endpoints, signing a new one when the cached token is missing or expired
+     * @see https://docs.paradex.trade/api/general-information/authentication
+     * @see https://docs.paradex.trade/api/general-information/api-authentication
+     * @param {object} [params] extra parameters specific to the exchange API endpoint
+     * @returns {string} the JWT
+     * @ignore
+     */
     async authenticateRest (params: Dict = {}): Promise<Str> {
         const cachedToken = this.safeString (this.options, 'authToken');
-        const now = this.parseToInt (this.nonce ());
         if (cachedToken !== undefined) {
             const cachedExpires = this.safeInteger (this.options, 'expires');
             if (cachedExpires === undefined) {
-                throw new ExchangeError (this.id + ' authenticateRest() missing cachedExpires');
+                // a long-lived api token set by the user, it is used as is and never refreshed
+                return cachedToken;
             }
-            if (now < cachedExpires) {
+            if (this.parseToInt (this.nonce ()) < cachedExpires) {
                 return cachedToken;
             }
         }
+        if (this.safeBool (this.options, 'adjustForTimeDifference', false) && (this.safeInteger (this.options, 'timeDifference') === undefined)) {
+            // the server rejects auth timestamps that are ahead of its clock
+            await this.loadTimeDifference ();
+        }
+        const now = this.parseToInt (this.nonce ());
         const account = await this.retrieveAccount ();
-        // https://docs.paradex.trade/api-reference/general-information/authentication
         const expires = now + 180;
         const req = {
             'method': 'POST',
@@ -1606,11 +1660,14 @@ export default class paradex extends Exchange {
         };
         const msg = this.starknetEncodeStructuredData (domain, messageTypes, req, this.safeString (account, 'address'));
         const signature = this.starknetSign (msg, account['privateKey']);
-        params['signature'] = signature;
-        params['account'] = this.safeString (account, 'address');
-        params['timestamp'] = req['timestamp'];
-        params['expiration'] = req['expiration'];
-        const response = await this.privatePostAuth (params);
+        const request: Dict = {
+            'public_key': this.safeString (account, 'publicKey'), // authenticates with this key, so registered subkeys can log in too
+            'signature': signature,
+            'account': this.safeString (account, 'address'),
+            'timestamp': req['timestamp'],
+            'expiration': req['expiration'],
+        };
+        const response = await this.privatePostAuthPublicKey (this.extend (request, params));
         //
         // {
         //     jwt_token: "ooooccxtooootoooootheoooomoonooooo"
@@ -1620,6 +1677,11 @@ export default class paradex extends Exchange {
         this.options['authToken'] = token;
         this.options['expires'] = expires;
         return token;
+    }
+
+    override nonce (): number {
+        const timeDifference = this.safeInteger (this.options, 'timeDifference', 0);
+        return this.parseToInt ((this.milliseconds () - timeDifference) / 1000);
     }
 
     override parseOrder (order: Dict, market: Market = undefined): Order {
@@ -3626,6 +3688,17 @@ export default class paradex extends Exchange {
         return this.filterBySymbolSinceLimit (sorted, this.safeString (market, 'symbol'), since, limit) as FundingRateHistory[];
     }
 
+    override async request (path: string, api: string[] = [ 'public' ], method = 'GET', params: Dict = {}, config: Dict = {}) {
+        if (api[0] === 'private') {
+            // implicit private methods authenticate on their own, the auth and onboarding endpoints sign their own headers
+            const isAuthEndpoint = (path === 'auth') || (path === 'auth/{public_key}') || (path === 'onboarding') || (path === 'v2/auth') || (path === 'v2/onboarding');
+            if (!isAuthEndpoint) {
+                await this.authenticateRest ();
+            }
+        }
+        return await this.fetch2 (path, api, method, params, config);
+    }
+
     override sign (path: string, api: string[] = [ 'public' ], method: string = 'GET', params: Dict = {}): Dict {
         const apiName = api[0];
         let version = this.version;
@@ -3653,7 +3726,7 @@ export default class paradex extends Exchange {
             };
             let privateBody: Str = undefined;
             // TODO: optimize
-            if (pathValue === 'auth') {
+            if ((pathValue === 'auth') || (pathValue === 'auth/{public_key}')) {
                 privateHeaders['PARADEX-STARKNET-ACCOUNT'] = this.safeString (query, 'account');
                 privateHeaders['PARADEX-STARKNET-SIGNATURE'] = this.safeString (query, 'signature');
                 privateHeaders['PARADEX-TIMESTAMP'] = this.safeString (query, 'timestamp');
@@ -3739,6 +3812,10 @@ export default class paradex extends Exchange {
                     break;
                 }
             }
+        }
+        if ((errorCode === 'INVALID_TOKEN') || (message === 'missing or malformed jwt')) {
+            // drop the rejected token, the next private call signs a new one
+            this.options['authToken'] = undefined;
         }
         const feedback = this.id + ' ' + body;
         if (errorCode === undefined) {
