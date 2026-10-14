@@ -2100,8 +2100,15 @@ export class BaseExchange {
         };
     }
 
+    /**
+     * @method
+     * @name Exchange#retrieveStarkPublicKey
+     * @description derives the stark public key (the x coordinate) of a stark private key
+     * @param {string} privateKey the stark private key as hex, with or without the 0x prefix
+     * @returns {string} the public key as 0x-prefixed lowercase hex without leading zeros
+     * @ignore
+     */
     retrieveStarkPublicKey (privateKey: any): string {
-        // the stark public key (x coordinate) of a stark private key, as 0x-prefixed lowercase hex without leading zeros
         return getStarkKey (privateKey.replace ('0x', ''));
     }
 

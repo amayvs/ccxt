@@ -1491,8 +1491,15 @@ export default class paradex extends Exchange {
         return domain;
     }
 
+    /**
+     * @method
+     * @name paradex#isStarknetAddress
+     * @description tells a paradex (starknet) account address from an ethereum one: an ethereum address is exactly 20 bytes (40 hex chars), a starknet address is a felt of up to 64 hex chars
+     * @param {string} [address] the address to check
+     * @returns {boolean} true for a starknet address
+     * @ignore
+     */
     isStarknetAddress (address: Str): boolean {
-        // an ethereum address is exactly 20 bytes (40 hex chars), a starknet address is a felt of up to 64 hex chars
         if (address === undefined) {
             return false;
         }
