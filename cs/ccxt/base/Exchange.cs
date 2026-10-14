@@ -992,6 +992,19 @@ public partial class BaseExchange
         return false;
     }
 
+    public string retrieveStarkPublicKey(object privateKey)
+    {
+        var privateKeyStr = privateKey.ToString();
+        if (privateKeyStr.StartsWith("0x", StringComparison.OrdinalIgnoreCase))
+        {
+            privateKeyStr = privateKeyStr.Substring(2);
+        }
+        BigInteger privatekey = BigInteger.Parse("0" + privateKeyStr, System.Globalization.NumberStyles.HexNumber);
+        BigInteger publicKey = ECDSA.PrivateToStarkKey(privatekey);
+        var publicKeyHex = publicKey.ToString("x").TrimStart('0');
+        return "0x" + ((publicKeyHex == "") ? "0" : publicKeyHex);
+    }
+
     public object retrieveStarkAccount(object signature, object accountClassHash, object accountProxyClassHash)
     {
         var signatureStr = signature.ToString();

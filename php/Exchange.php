@@ -1668,6 +1668,10 @@ class BaseExchange {
         return $address_hex;
     }
 
+    public function retrieve_stark_public_key($privateKey) {
+        return Key::getStarkKey(preg_replace('/^0x/i', '', $privateKey));
+    }
+
     public function retrieve_stark_account($signature, $accountClassHash, $accountProxyClassHash) {
         $privateKey = Key::ethSigToPrivate($signature);
         $publicKey = Key::getStarkKey($privateKey);
