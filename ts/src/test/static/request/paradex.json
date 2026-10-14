@@ -680,6 +680,65 @@
                 "url": "https://api.prod.paradex.trade/v1/markets/summary?market=ALL",
                 "input": []
             }
+        ],
+        "authenticateRest": [
+            {
+                "disabledGO": true,
+                "disabledJava": true,
+                "disabledRS": true,
+                "description": "eth key: signs in with the derived stark public key in the path",
+                "method": "authenticateRest",
+                "url": "https://api.prod.paradex.trade/v1/auth/0x2be4e975781f8b2b2d1f717ca6b5da4e3b39678d21511479d8dbac732556c29",
+                "input": [],
+                "options": {
+                    "expires": 0
+                },
+                "headers": {
+                    "PARADEX-STARKNET-ACCOUNT": "0x2338acea5f3614a47f681094fd9c862ea4c885f4863a6387fce48fffb013e8c"
+                }
+            },
+            {
+                "disabledGO": true,
+                "disabledJava": true,
+                "disabledRS": true,
+                "description": "subkey: signs in with the subkey public key and the main account address",
+                "method": "authenticateRest",
+                "url": "https://api.prod.paradex.trade/v1/auth/0xc37d1af7d2f94365bd704eb35af1d7ce19bf9115d440a28d078bef26d65847",
+                "input": [],
+                "options": {
+                    "expires": 0,
+                    "paradexAccount": {
+                        "privateKey": "0x2f85a3afa49c9a88700f5dc72865146edba0bb5fcbdd6780a6be65d4c97a6fc",
+                        "address": "0x51312b7c9101038d2e3a651b662a045a81ea2cc598d5a5ce3513b511115202"
+                    }
+                },
+                "headers": {
+                    "PARADEX-STARKNET-ACCOUNT": "0x51312b7c9101038d2e3a651b662a045a81ea2cc598d5a5ce3513b511115202"
+                }
+            }
+        ],
+        "privateGetAccount": [
+            {
+                "description": "implicit private call with a valid token",
+                "method": "privateGetAccount",
+                "url": "https://api.prod.paradex.trade/v1/account?",
+                "input": [],
+                "headers": {
+                    "Authorization": "Bearer token"
+                }
+            },
+            {
+                "disabledGO": true,
+                "disabledJava": true,
+                "disabledRS": true,
+                "description": "implicit private call signs in first when the token expired",
+                "method": "privateGetAccount",
+                "url": "https://api.prod.paradex.trade/v1/auth/0x2be4e975781f8b2b2d1f717ca6b5da4e3b39678d21511479d8dbac732556c29",
+                "input": [],
+                "options": {
+                    "expires": 0
+                }
+            }
         ]
     }
 }

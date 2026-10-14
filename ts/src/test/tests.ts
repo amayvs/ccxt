@@ -3710,6 +3710,84 @@ class testMainClass {
             reqHeaders = (exchange.last_request_headers !== undefined && exchange.last_request_headers !== null) ? exchange.last_request_headers : {};
         }
         assert (reqHeaders['PARADEX-PARTNER'] === id, 'paradex - id: ' + id + ' not in headers');
+        // l2 credentials: a stark private key (here a registered subkey) with the paradex account address as walletAddress
+        if (this.lang !== 'RUST') {
+            exchange.options['paradexAccount'] = undefined;
+            exchange.walletAddress = '0x51312b7c9101038d2e3a651b662a045a81ea2cc598d5a5ce3513b511115202';
+            exchange.privateKey = '0x2f85a3afa49c9a88700f5dc72865146edba0bb5fcbdd6780a6be65d4c97a6fc';
+            // dynamic dispatch: retrieveAccount/authenticateRest are not on the base exchange type in the statically typed ports
+            let l2Account: any = undefined;
+            let l2Error: Str = undefined;
+            try {
+                if (!isSync ()) {
+                    l2Account = await callExchangeMethodDynamically (exchange, 'retrieveAccount', []);
+                } else {
+                    l2Account = callExchangeMethodDynamicallySync (exchange, 'retrieveAccount', []);
+                }
+            } catch (e) {
+                l2Error = exceptionMessage (e);
+            }
+            assert (l2Error === undefined, 'paradex - retrieveAccount with l2 credentials must not throw');
+            assert (l2Account['address'] === '0x51312b7c9101038d2e3a651b662a045a81ea2cc598d5a5ce3513b511115202', 'paradex - l2 account address must be the walletAddress');
+            assert (l2Account['privateKey'] === '0x2f85a3afa49c9a88700f5dc72865146edba0bb5fcbdd6780a6be65d4c97a6fc', 'paradex - l2 account private key must be the privateKey');
+            assert (l2Account['publicKey'] === '0xc37d1af7d2f94365bd704eb35af1d7ce19bf9115d440a28d078bef26d65847', 'paradex - l2 account public key mismatch: ' + l2Account['publicKey']);
+        }
+        // a long-lived api token without expiry is used as is, no credentials needed
+        exchange.options['authToken'] = 'long-lived-token';
+        exchange.options['expires'] = undefined;
+        let longLivedToken: any = undefined;
+        let longLivedError: Str = undefined;
+        try {
+            if (!isSync ()) {
+                longLivedToken = await callExchangeMethodDynamically (exchange, 'authenticateRest', []);
+            } else {
+                longLivedToken = callExchangeMethodDynamicallySync (exchange, 'authenticateRest', []);
+            }
+        } catch (e) {
+            longLivedError = exceptionMessage (e);
+        }
+        assert (longLivedError === undefined, 'paradex - authenticateRest with a long-lived token must not throw');
+        const tokenResult: Dict = { 'token': longLivedToken }; // dict access compares by value in every port (go returns *string)
+        assert (tokenResult['token'] === 'long-lived-token', 'paradex - long-lived token must be returned as is');
+        // a rejected token is dropped so the next private call signs a new one
+        // (skipped in c#, where reflection cannot pick between the two handleErrors overloads)
+        if (this.lang !== 'C#') {
+            const invalidTokenArgs = [ 401, 'Unauthorized', 'https://api.prod.paradex.trade/v1/account', 'GET', {}, '{"error":"INVALID_TOKEN","message":"invalid token"}', { 'error': 'INVALID_TOKEN', 'message': 'invalid token' }, {}, undefined ];
+            let invalidTokenThrown = false;
+            try {
+                if (!isSync ()) {
+                    await callExchangeMethodDynamically (exchange, 'handleErrors', invalidTokenArgs);
+                } else {
+                    callExchangeMethodDynamicallySync (exchange, 'handleErrors', invalidTokenArgs);
+                }
+            } catch (e) {
+                invalidTokenThrown = true;
+            }
+            assert (invalidTokenThrown, 'paradex - INVALID_TOKEN must throw');
+            assert (exchange.safeString (exchange.options, 'authToken') === undefined, 'paradex - INVALID_TOKEN must clear the cached authToken');
+        }
+        // timestamps follow the server clock when options['timeDifference'] is set: with the server far ahead,
+        // a token that is still valid by the local clock (expires in 2033) must be treated as expired and re-signed
+        if (this.lang !== 'RUST') {
+            exchange.options['authToken'] = 'cached-token';
+            exchange.options['expires'] = 2000000000;
+            exchange.options['timeDifference'] = -1000000000000;
+            let cachedTokenReused = false;
+            try {
+                let adjustedToken: any = undefined;
+                if (!isSync ()) {
+                    adjustedToken = await callExchangeMethodDynamically (exchange, 'authenticateRest', []);
+                } else {
+                    adjustedToken = callExchangeMethodDynamicallySync (exchange, 'authenticateRest', []);
+                }
+                const adjustedResult: Dict = { 'token': adjustedToken };
+                cachedTokenReused = (adjustedResult['token'] === 'cached-token');
+            } catch (e) {
+                // re-signing fails offline, which is the expected path
+                cachedTokenReused = false;
+            }
+            assert (!cachedTokenReused, 'paradex - authenticateRest must use the server-adjusted clock from options timeDifference');
+        }
         if (!isSync ()) {
             await close (exchange);
         }
