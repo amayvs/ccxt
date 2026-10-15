@@ -1571,7 +1571,7 @@ export default class paradex extends Exchange {
     /**
      * @method
      * @name paradex#authenticateRest
-     * @description returns a JWT for the private endpoints, signing a new one when the cached token is missing or expired
+     * @description returns a JWT for the private endpoints, signing a new one when the cached token is missing or expired, concurrent callers share one signing call
      * @see https://docs.paradex.trade/api/general-information/authentication
      * @see https://docs.paradex.trade/api/general-information/api-authentication
      * @param {object} [params] extra parameters specific to the exchange API endpoint
@@ -1579,17 +1579,67 @@ export default class paradex extends Exchange {
      * @ignore
      */
     async authenticateRest (params: Dict = {}): Promise<Str> {
-        const cachedToken = this.safeString (this.options, 'authToken');
-        if (cachedToken !== undefined) {
-            const cachedExpires = this.safeInteger (this.options, 'expires');
-            if (cachedExpires === undefined) {
-                // a long-lived api token set by the user, it is used as is and never refreshed
-                return cachedToken;
-            }
-            if (this.nonce () < cachedExpires) {
-                return cachedToken;
-            }
+        if (this.hasValidAuthToken ()) {
+            const cachedToken = this.safeString (this.options, 'authToken');
+            return cachedToken;
         }
+        if (this.safeBool (this.options, 'authenticatingRest', false)) {
+            // another call is already signing a token, wait for it instead of signing a second one
+            const timeout = this.safeInteger (this.options, 'authenticateRestTimeout', this.timeout);
+            const pollInterval = this.safeInteger (this.options, 'authenticateRestPollInterval', 20);
+            let waited = 0;
+            while (this.safeBool (this.options, 'authenticatingRest', false) && (waited < timeout)) {
+                await this.sleep (pollInterval);
+                waited = waited + pollInterval;
+            }
+            if (this.hasValidAuthToken ()) {
+                const sharedToken = this.safeString (this.options, 'authToken');
+                return sharedToken;
+            }
+            // the other call failed or timed out, sign a new token below
+        }
+        this.options['authenticatingRest'] = true;
+        try {
+            await this.authenticateRestHelper (params);
+        } catch (e) {
+            this.options['authenticatingRest'] = false;
+            throw e;
+        }
+        this.options['authenticatingRest'] = false;
+        // the helper caches the new token
+        const token = this.safeString (this.options, 'authToken');
+        return token;
+    }
+
+    /**
+     * @method
+     * @name paradex#hasValidAuthToken
+     * @description checks whether the cached JWT or api token can still be used
+     * @returns {boolean} true when a token is cached and has not expired
+     * @ignore
+     */
+    hasValidAuthToken (): boolean {
+        const cachedToken = this.safeString (this.options, 'authToken');
+        if (cachedToken === undefined) {
+            return false;
+        }
+        const cachedExpires = this.safeInteger (this.options, 'expires');
+        if (cachedExpires === undefined) {
+            // a long-lived api token set by the user, it is used as is and never refreshed
+            return true;
+        }
+        return (this.nonce () < cachedExpires);
+    }
+
+    /**
+     * @method
+     * @name paradex#authenticateRestHelper
+     * @description signs a new JWT and caches it, use authenticateRest() so concurrent callers share one call
+     * @param {object} [params] extra parameters specific to the exchange API endpoint
+     * @returns {string} the JWT
+     * @ignore
+     */
+    async authenticateRestHelper (params: Dict = {}): Promise<Str> {
         if (this.safeBool (this.options, 'adjustForTimeDifference', false) && (this.safeInteger (this.options, 'timeDifference') === undefined)) {
             // the server rejects auth timestamps that are ahead of its clock
             await this.loadTimeDifference ();
