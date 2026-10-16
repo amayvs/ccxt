@@ -13,10 +13,13 @@ import { ecdsa } from './base/functions/crypto.js';
 
 /**
  * @class paradex
- * @description Paradex is a decentralized exchange built on the StarkWare layer 2 scaling solution. To access private methods you can either use the ETH private key and address by setting (exchange.privateKey and exchange.walletAddress),
- * or the Paradex (StarkNet) private key and Paradex account address by setting exchange.privateKey to the stark private key and exchange.walletAddress to the Paradex account address (this also works with a registered subkey: use the subkey's private key and the main account address),
- * or alternatively you can provide the starknet private key and account address by setting exchange.options['paradexAccount'] with {"privateKey": A, "address": C} (publicKey is derived when omitted),
- * or a long-lived (e.g. read-only) API token by setting exchange.options['authToken'] without exchange.options['expires']
+ * @description Paradex is a decentralized exchange built on the StarkWare layer 2 scaling solution. Private methods accept these credentials:
+ * - recommended for API and bot use, a trading key (subkey): set exchange.privateKey to the subkey's stark private key and exchange.walletAddress to the Paradex account address it is registered under, the account's main key stays out of the bot and the subkey can be revoked on its own
+ * - the account's own Paradex (stark) private key with exchange.walletAddress set to the Paradex account address
+ * - the ETH private key and address (exchange.privateKey and exchange.walletAddress), the Paradex account is derived from them
+ * - exchange.options['paradexAccount'] = {"privateKey": A, "address": C}, publicKey is derived when omitted
+ * - a long-lived (e.g. read-only) API token in exchange.options['authToken'] without exchange.options['expires']
+ * Each instance handles one Paradex account: use a separate instance for each sub-account
  * @augments Exchange
  */
 export default class paradex extends Exchange {
@@ -325,7 +328,9 @@ export default class paradex extends Exchange {
                     'DUPLICATED_CLIENT_ID': InvalidOrder,
                     'INVALID_PRICE_PRECISION': OperationRejected,
                     'INVALID_SYMBOL': OperationRejected,
-                    'INVALID_TOKEN': OperationRejected,
+                    'INVALID_TOKEN': AuthenticationError,
+                    'INVALID_SUBKEY': AuthenticationError,
+                    'SUBKEY_REVOKED': AuthenticationError,
                     'INVALID_ETHEREUM_ADDRESS': OperationRejected,
                     'INVALID_ETHEREUM_SIGNATURE': OperationRejected,
                     'INVALID_STARKNET_ADDRESS': OperationRejected,
@@ -3581,14 +3586,26 @@ export default class paradex extends Exchange {
     }
 
     override async request (path: string, api: string[] = [ 'public' ], method = 'GET', params: Dict = {}, config: Dict = {}) {
-        if (api[0] === 'private') {
-            // implicit private methods authenticate on their own, the auth and onboarding endpoints sign their own headers
-            const isAuthEndpoint = (path === 'auth') || (path === 'auth/{public_key}') || (path === 'onboarding') || (path === 'v2/auth') || (path === 'v2/onboarding');
-            if (!isAuthEndpoint) {
-                await this.authenticateRest ();
-            }
+        // the auth and onboarding endpoints sign their own headers
+        const isAuthEndpoint = (path === 'auth') || (path === 'auth/{public_key}') || (path === 'onboarding') || (path === 'v2/auth') || (path === 'v2/onboarding');
+        if ((api[0] !== 'private') || isAuthEndpoint) {
+            return await this.fetch2 (path, api, method, params, config);
         }
-        return await this.fetch2 (path, api, method, params, config);
+        // implicit private methods authenticate on their own
+        await this.authenticateRest ();
+        try {
+            return await this.fetch2 (path, api, method, params, config);
+        } catch (e) {
+            // handleErrors drops a token the server rejected, sign in again and retry once,
+            // a failing sign-in (e.g. a revoked key) surfaces its own AuthenticationError
+            const tokenDropped = (this.safeString (this.options, 'authToken') === undefined);
+            const canSignIn = (this.safeDict (this.options, 'paradexAccount') !== undefined) || this.checkRequiredCredentials (false);
+            if ((e instanceof AuthenticationError) && tokenDropped && canSignIn) {
+                await this.authenticateRest ();
+                return await this.fetch2 (path, api, method, params, config);
+            }
+            throw e;
+        }
     }
 
     override sign (path: string, api: string[] = [ 'public' ], method = 'GET', params: Dict = {}): Dict {
@@ -3664,6 +3681,10 @@ export default class paradex extends Exchange {
     }
 
     override handleErrors (httpCode: int, reason: string, url: string, method: string, headers: Dict, body: string, response: any, requestHeaders: any, requestBody: any) {
+        if (httpCode === 401) {
+            // the server rejected the token, drop it so the next private call signs a new one
+            this.options['authToken'] = undefined;
+        }
         if (response === undefined) {
             return undefined; // fallback to default error handler
         }
@@ -3680,7 +3701,10 @@ export default class paradex extends Exchange {
                 // drop the rejected token, the next private call signs a new one
                 this.options['authToken'] = undefined;
             }
-            const feedback = this.id + ' ' + body;
+            let feedback = this.id + ' ' + body;
+            if ((errorCode === 'SUBKEY_REVOKED') || (errorCode === 'INVALID_SUBKEY')) {
+                feedback = this.id + ' key revoked or inactive, create a new subkey or use an active key: ' + body;
+            }
             this.throwBroadlyMatchedException (this.exceptions['broad'], body, feedback);
             this.throwExactlyMatchedException (this.exceptions['exact'], errorCode, feedback);
             throw new ExchangeError (feedback); // unknown message
