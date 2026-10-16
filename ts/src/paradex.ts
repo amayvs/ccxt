@@ -3593,19 +3593,21 @@ export default class paradex extends Exchange {
         }
         // implicit private methods authenticate on their own
         await this.authenticateRest ();
+        let response = undefined;
         try {
-            return await this.fetch2 (path, api, method, params, config);
+            response = await this.fetch2 (path, api, method, params, config);
         } catch (e) {
             // handleErrors drops a token the server rejected, sign in again and retry once,
             // a failing sign-in (e.g. a revoked key) surfaces its own AuthenticationError
             const tokenDropped = (this.safeString (this.options, 'authToken') === undefined);
             const canSignIn = (this.safeDict (this.options, 'paradexAccount') !== undefined) || this.checkRequiredCredentials (false);
-            if ((e instanceof AuthenticationError) && tokenDropped && canSignIn) {
-                await this.authenticateRest ();
-                return await this.fetch2 (path, api, method, params, config);
+            if (!((e instanceof AuthenticationError) && tokenDropped && canSignIn)) {
+                throw e;
             }
-            throw e;
+            await this.authenticateRest ();
+            response = await this.fetch2 (path, api, method, params, config);
         }
+        return response;
     }
 
     override sign (path: string, api: string[] = [ 'public' ], method = 'GET', params: Dict = {}): Dict {
