@@ -5458,7 +5458,8 @@
                     1792184824215,
                     null,
                     {
-                        "paginate": true
+                        "paginate": true,
+                        "paginationCalls": 2
                     }
                 ],
                 "httpResponseByUrl": {
@@ -5535,8 +5536,7 @@
                             "funding_rate_8h": "0.0000965",
                             "funding_period_hours": 8,
                             "created_at": 1792184824215,
-                            "impact_premium_rate": "-0.0003852899566919",
-                            "next": null
+                            "impact_premium_rate": "-0.0003852899566919"
                         },
                         "symbol": "BTC/USD:USDC",
                         "fundingRate": 0.00009650048095,
@@ -5552,8 +5552,7 @@
                             "funding_rate_8h": "0.0000965",
                             "funding_period_hours": 8,
                             "created_at": 1792184829215,
-                            "impact_premium_rate": "-0.0003882368242985",
-                            "next": null
+                            "impact_premium_rate": "-0.0003882368242985"
                         },
                         "symbol": "BTC/USD:USDC",
                         "fundingRate": 0.00009650721247,
@@ -5621,7 +5620,8 @@
                     1792184824215,
                     2,
                     {
-                        "paginate": true
+                        "paginate": true,
+                        "paginationCalls": 2
                     }
                 ],
                 "httpResponseByUrl": {
@@ -5698,8 +5698,7 @@
                             "funding_rate_8h": "0.0000965",
                             "funding_period_hours": 8,
                             "created_at": 1792184824215,
-                            "impact_premium_rate": "-0.0003852899566919",
-                            "next": null
+                            "impact_premium_rate": "-0.0003852899566919"
                         },
                         "symbol": "BTC/USD:USDC",
                         "fundingRate": 0.00009650048095,
@@ -5715,8 +5714,7 @@
                             "funding_rate_8h": "0.0000965",
                             "funding_period_hours": 8,
                             "created_at": 1792184829215,
-                            "impact_premium_rate": "-0.0003882368242985",
-                            "next": null
+                            "impact_premium_rate": "-0.0003882368242985"
                         },
                         "symbol": "BTC/USD:USDC",
                         "fundingRate": 0.00009650721247,
