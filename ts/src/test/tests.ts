@@ -3752,8 +3752,9 @@ class testMainClass {
         // a rejected token is dropped so the next private call signs a new one
         // (skipped in c#, where reflection cannot pick between the two handleErrors overloads)
         if (this.lang !== 'C#') {
-            const invalidTokenArgs = [ 401, 'Unauthorized', 'https://api.prod.paradex.trade/v1/account', 'GET', {}, '{"error":"INVALID_TOKEN","message":"invalid token"}', { 'error': 'INVALID_TOKEN', 'message': 'invalid token' }, {}, undefined ];
-            let invalidTokenThrown = false;
+            // the error code alone drops the token (400 here, so the status is not what triggers it)
+            const invalidTokenArgs = [ 400, 'Bad Request', 'https://api.prod.paradex.trade/v1/account', 'GET', {}, '{"error":"INVALID_TOKEN","message":"invalid token"}', { 'error': 'INVALID_TOKEN', 'message': 'invalid token' }, {}, undefined ];
+            let invalidTokenAuthError = false;
             try {
                 if (!isSync ()) {
                     await callExchangeMethodDynamically (exchange, 'handleErrors', invalidTokenArgs);
@@ -3761,10 +3762,55 @@ class testMainClass {
                     callExchangeMethodDynamicallySync (exchange, 'handleErrors', invalidTokenArgs);
                 }
             } catch (e) {
-                invalidTokenThrown = true;
+                invalidTokenAuthError = (e instanceof AuthenticationError);
             }
-            assert (invalidTokenThrown, 'paradex - INVALID_TOKEN must throw');
+            assert (invalidTokenAuthError, 'paradex - INVALID_TOKEN must throw an AuthenticationError');
             assert (exchange.safeString (exchange.options, 'authToken') === undefined, 'paradex - INVALID_TOKEN must clear the cached authToken');
+            // any 401 drops the token too, even without a json error body
+            exchange.options['authToken'] = 'rejected-token';
+            const unauthorizedArgs = [ 401, 'Unauthorized', 'https://api.prod.paradex.trade/v1/account', 'GET', {}, '', undefined, {}, undefined ];
+            let unauthorizedHandled = true;
+            try {
+                if (!isSync ()) {
+                    await callExchangeMethodDynamically (exchange, 'handleErrors', unauthorizedArgs);
+                } else {
+                    callExchangeMethodDynamicallySync (exchange, 'handleErrors', unauthorizedArgs);
+                }
+            } catch (e) {
+                // handleErrors returns nothing here, some async ports reject awaiting a plain value
+                unauthorizedHandled = false;
+            }
+            assert (unauthorizedHandled || (this.lang !== 'JS'), 'paradex - handleErrors must not throw on a bare 401, the default http handler does');
+            assert (exchange.safeString (exchange.options, 'authToken') === undefined, 'paradex - a 401 must clear the cached authToken');
+            // a revoked or inactive key is an AuthenticationError that says so
+            const revokedArgs = [ 401, 'Unauthorized', 'https://api.prod.paradex.trade/v1/auth/0x1', 'POST', {}, '{"error":"SUBKEY_REVOKED","message":"subkey revoked"}', { 'error': 'SUBKEY_REVOKED', 'message': 'subkey revoked' }, {}, undefined ];
+            let revokedMessage = '';
+            try {
+                if (!isSync ()) {
+                    await callExchangeMethodDynamically (exchange, 'handleErrors', revokedArgs);
+                } else {
+                    callExchangeMethodDynamicallySync (exchange, 'handleErrors', revokedArgs);
+                }
+            } catch (e) {
+                if (e instanceof AuthenticationError) {
+                    revokedMessage = exceptionMessage (e);
+                }
+            }
+            assert (revokedMessage.indexOf ('key revoked or inactive') >= 0, 'paradex - SUBKEY_REVOKED must throw an AuthenticationError saying the key is revoked or inactive');
+            const inactiveArgs = [ 401, 'Unauthorized', 'https://api.prod.paradex.trade/v1/auth/0x1', 'POST', {}, '{"error":"INVALID_SUBKEY","message":"invalid subkey"}', { 'error': 'INVALID_SUBKEY', 'message': 'invalid subkey' }, {}, undefined ];
+            let inactiveMessage = '';
+            try {
+                if (!isSync ()) {
+                    await callExchangeMethodDynamically (exchange, 'handleErrors', inactiveArgs);
+                } else {
+                    callExchangeMethodDynamicallySync (exchange, 'handleErrors', inactiveArgs);
+                }
+            } catch (e) {
+                if (e instanceof AuthenticationError) {
+                    inactiveMessage = exceptionMessage (e);
+                }
+            }
+            assert (inactiveMessage.indexOf ('key revoked or inactive') >= 0, 'paradex - INVALID_SUBKEY must throw an AuthenticationError saying the key is revoked or inactive');
         }
         // timestamps follow the server clock when options['timeDifference'] is set: with the server far ahead,
         // a token that is still valid by the local clock (expires in 2033) must be treated as expired and re-signed
