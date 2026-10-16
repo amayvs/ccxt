@@ -1087,13 +1087,13 @@ export default class paradex extends Exchange {
             request['price_kind'] = (price === 'index') ? 'underlying' : price;
         }
         const [ requestUntil, paramsUntil ] = this.handleUntilOption ('end_at', request, paramsPaginate);
-        const hasEnd = ('end_at' in request);
+        const hasEnd = ('end_at' in requestUntil);
         const paramsOmitted: Dict = this.omit (paramsUntil, [ 'price' ]);
         const limitResolved = (limit === undefined) ? maxLimit : Math.min (limit, maxLimit);
         if (since !== undefined) {
             requestUntil['start_at'] = since;
             // the venue rejects a range wider than its bar cap, so an until past the window is clamped to it
-            const windowEnd = since + duration * (limitResolved + 1) * 1000 - 1;
+            const windowEnd = this.sum (since, duration * (limitResolved + 1) * 1000 - 1);
             const endAt = this.safeInteger (requestUntil, 'end_at', windowEnd) as number;
             if (!hasEnd || (endAt > windowEnd)) {
                 requestUntil['end_at'] = windowEnd;
