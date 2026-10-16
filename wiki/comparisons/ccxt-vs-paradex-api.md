@@ -300,7 +300,10 @@ Start with [Install](/docs/install), then the [Manual](/docs/manual), then the [
 Yes. Give it `walletAddress` and `privateKey` (your L1 Ethereum credentials) and CCXT signs the EIP-712 `STARK Key` message, derives the Starknet account, onboards it, obtains the JWT, caches it and refreshes it before it expires. Paradex's JWTs expire every five minutes and cannot be extended, so this is not a one-off setup step.
 
 **Can I use CCXT with a Paradex subkey (L2-only credentials)?**
-Yes. Set `walletAddress` to the Paradex (Starknet) account address and `privateKey` to the L2 private key — the account's own L2 key or a registered subkey's. CCXT detects the Starknet address, skips the L1 derivation and signs in with that key's public key, so the L1 Ethereum key never has to be handed over. Onboarding still needs the L1 credentials.
+Yes, and for API and bot use it is the recommended setup. Set `walletAddress` to the Paradex (Starknet) account address and `privateKey` to the subkey's L2 private key. CCXT detects the Starknet address, skips the L1 derivation and signs in with that key's public key, so neither the L1 Ethereum key nor the account's main L2 key has to live in the bot, and a leaked subkey can be revoked on its own. The account's own L2 key works the same way. A revoked or inactive subkey raises `AuthenticationError`. Onboarding still needs the L1 credentials.
+
+**Can one CCXT instance trade several Paradex sub-accounts?**
+No. Each `ccxt.paradex` instance signs in as one Paradex account and caches that account's token, so create one instance per sub-account, each with its own credentials.
 
 **Does CCXT support Paradex options?**
 Yes. Options markets are loaded alongside perpetuals in the same `paradex` instance, with symbols like `'BTC/USD:USDC-117000-P'`, and `fetch_greeks` / `fetch_all_greeks` are implemented.
