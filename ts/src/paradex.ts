@@ -432,7 +432,7 @@ export default class paradex extends Exchange {
                         'iceberg': false,
                     },
                     'createOrders': {
-                        'max': 50,
+                        'max': 10, // https://docs.paradex.trade/api/prod/orders/batch
                     },
                     'fetchMyTrades': {
                         'marginMode': false,
