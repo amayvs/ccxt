@@ -13,7 +13,13 @@ import ccxt from '../../../../ccxt.js';
 // dropped before it is decoded, and the subscribes of a call watching several
 // markets go one at a time, each once the previous one is acknowledged, a failed
 // request rejects the watchers of its own markets only, an all-markets summary
-// subscribe drops the scoped one first, and liquidations are kept between calls
+// subscribe drops the scoped one first, and liquidations are kept between calls.
+// The unWatch methods: the reply forgets the subscription, rejects its watchers
+// and clears the cache, an error reply rejects the unwatch only, a failed channel
+// does not stop the others, a watch made while an unsubscribe of its channel is
+// in flight waits for it (or for its timeout), a market on the deltas feed (or
+// switching to it) is unsubscribed from that feed, the last scoped ticker
+// unsubscribes the channel, and unWatchFundingRate leaves watchFundingRates alone
 
 const WS_URL = 'wss://ws.api.prod.paradex.trade/v1?sbeSchemaId=1&sbeSchemaVersion=3';
 
@@ -318,6 +324,212 @@ async function testParadexLiquidationsKept () {
     client.reject (new Error ('cleanup'));
 }
 
+async function settle (promise: Promise<any>) {
+    // resolves to the error the promise was rejected with, or to the string 'pending' while it has not settled
+    let outcome: any = 'pending';
+    promise.then ((value: any) => {
+        outcome = { 'value': value };
+    }, (e: any) => {
+        outcome = e;
+    });
+    await sleep (0);
+    return outcome;
+}
+
+async function testParadexUnwatchRejectsWatchers () {
+    const { exchange, client, sent } = createHarness ();
+    const channel = 'trades.BTC-USD-PERP';
+    const trades = exchange.watchTrades ('BTC/USD:USDC');
+    trades.catch (() => {});
+    await sleep (0);
+    exchange.handleMessage (client, reply (sent[0]['id'], { 'channel': channel }));
+    exchange.handleMessage (client, exchange.base16ToBinary (BTC_LIQUIDATION));
+    await trades;
+    assert (exchange.trades['BTC/USD:USDC'] !== undefined, 'the trade frame fills the cache');
+    const nextTrades = exchange.watchTrades ('BTC/USD:USDC');
+    nextTrades.catch (() => {});
+    const liquidations = exchange.watchLiquidations ('BTC/USD:USDC');
+    liquidations.catch (() => {});
+    await sleep (0);
+    assert.equal (sent.length, 1, 'both watchers ride the subscription already there');
+    const unwatch = exchange.unWatchTrades ('BTC/USD:USDC');
+    unwatch.catch (() => {});
+    await sleep (0);
+    assert.equal (sent.length, 2, 'the unwatch sends one request');
+    assert.deepStrictEqual ([ sent[1]['method'], sent[1]['params'] ], [ 'unsubscribe', { 'channel': channel } ], 'the unwatch unsubscribes the trades channel');
+    assert.equal (await settle (nextTrades), 'pending', 'the watchers are not rejected before the reply');
+    exchange.handleMessage (client, reply (sent[1]['id'], { 'channel': channel }));
+    assert.equal (await unwatch, true, 'the reply resolves the unwatch');
+    assert ((await settle (nextTrades)) instanceof ccxt.UnsubscribeError, 'the reply rejects the trades watcher');
+    assert ((await settle (liquidations)) instanceof ccxt.UnsubscribeError, 'the liquidations of the market end with its trades channel');
+    assert (!(channel in client.subscriptions), 'the reply forgets the subscription');
+    assert (!('unsubscribe:' + channel in client.subscriptions), 'the reply forgets the unsubscribe');
+    assert.equal (exchange.trades['BTC/USD:USDC'], undefined, 'the reply clears the trades cache');
+}
+
+async function testParadexUnwatchErrorReply () {
+    const { exchange, client, sent } = createHarness ();
+    const channel = 'trades.BTC-USD-PERP';
+    const trades = exchange.watchTrades ('BTC/USD:USDC');
+    trades.catch (() => {});
+    await sleep (0);
+    exchange.handleMessage (client, reply (sent[0]['id'], { 'channel': channel }));
+    const unwatch = exchange.unWatchTrades ('BTC/USD:USDC');
+    unwatch.catch (() => {});
+    await sleep (0);
+    exchange.handleMessage (client, { 'jsonrpc': '2.0', 'id': sent[1]['id'], 'error': { 'code': -32600, 'message': 'invalid unsubscribe request' }});
+    assert ((await settle (unwatch)) instanceof ccxt.BadRequest, 'an error reply rejects the unwatch');
+    assert.equal (await settle (trades), 'pending', 'an error reply to the unsubscribe must not reject the watcher');
+    assert (channel in client.subscriptions, 'an error reply keeps the subscription');
+    assert (!('unsubscribe:' + channel in client.subscriptions), 'an error reply forgets the unsubscribe, so that it can be sent again');
+    client.reject (new Error ('cleanup'));
+}
+
+async function testParadexUnwatchContinuesAfterError () {
+    const { exchange, client, sent } = createHarness ();
+    const unwatch = exchange.unWatchTradesForSymbols ([ 'BTC/USD:USDC', 'ETH/USD:USDC' ]);
+    unwatch.catch (() => {});
+    await sleep (0);
+    assert.equal (sent.length, 1, 'the second unsubscribe waits for the first reply');
+    exchange.handleMessage (client, { 'jsonrpc': '2.0', 'id': sent[0]['id'], 'error': { 'code': -32600, 'message': 'invalid unsubscribe request' }});
+    await sleep (0);
+    assert.equal (sent.length, 2, 'a refused channel does not stop the next one');
+    assert.deepStrictEqual (sent[1]['params'], { 'channel': 'trades.ETH-USD-PERP' }, 'the next channel is unsubscribed');
+    exchange.handleMessage (client, reply (sent[1]['id'], { 'channel': 'trades.ETH-USD-PERP' }));
+    assert ((await settle (unwatch)) instanceof ccxt.BadRequest, 'the unwatch is rejected with the error of the refused channel');
+}
+
+async function testParadexWatchDuringUnwatch () {
+    const { exchange, client, sent } = createHarness ();
+    const channel = 'trades.BTC-USD-PERP';
+    const first = exchange.watchTrades ('BTC/USD:USDC');
+    first.catch (() => {});
+    await sleep (0);
+    exchange.handleMessage (client, reply (sent[0]['id'], { 'channel': channel }));
+    const unwatch = exchange.unWatchTrades ('BTC/USD:USDC');
+    unwatch.catch (() => {});
+    await sleep (0);
+    const again = exchange.watchTrades ('BTC/USD:USDC');
+    again.catch (() => {});
+    await sleep (0);
+    assert.equal (sent.length, 2, 'a watch made while the unsubscribe is in flight waits for its reply');
+    exchange.handleMessage (client, reply (sent[1]['id'], { 'channel': channel }));
+    await unwatch;
+    await sleep (0);
+    assert.equal (sent.length, 3, 'the watch subscribes again once the unsubscribe is acknowledged');
+    assert.deepStrictEqual ([ sent[2]['method'], sent[2]['params'] ], [ 'subscribe', { 'channel': channel } ], 'the watch subscribes its channel again');
+    assert.equal (await settle (again), 'pending', 'the reply of the unsubscribe must not reject a watch made after it');
+    client.reject (new Error ('cleanup'));
+}
+
+async function testParadexUnwatchTimeout () {
+    const { exchange, client, sent } = createHarness ();
+    exchange.options['unsubscribeTimeout'] = 20;
+    const channel = 'trades.BTC-USD-PERP';
+    const first = exchange.watchTrades ('BTC/USD:USDC');
+    first.catch (() => {});
+    await sleep (0);
+    exchange.handleMessage (client, reply (sent[0]['id'], { 'channel': channel }));
+    const unwatch = exchange.unWatchTrades ('BTC/USD:USDC');
+    unwatch.catch (() => {});
+    await sleep (0);
+    const again = exchange.watchTrades ('BTC/USD:USDC');
+    again.catch (() => {});
+    await sleep (50);
+    assert ((await settle (unwatch)) instanceof ccxt.RequestTimeout, 'an unacknowledged unsubscribe times out');
+    assert.equal (sent.length, 3, 'the waiting watch subscribes again once the unsubscribe timed out');
+    assert.equal (sent[2]['method'], 'subscribe', 'the waiting watch subscribes again once the unsubscribe timed out');
+    client.reject (new Error ('cleanup'));
+}
+
+async function testParadexUnwatchOrderBookFeed () {
+    const { exchange, client, sent } = createHarness ();
+    const deltasChannel = 'order_book.BTC-USD-PERP.deltas';
+    exchange.orderbooks['BTC/USD:USDC'] = exchange.orderBook ();
+    client.subscriptions[deltasChannel] = { 'id': 1, 'messageHashes': [ 'orderbook:BTC/USD:USDC' ] };
+    client.subscriptions[deltasChannel + ':requested'] = true;
+    const unwatch = exchange.unWatchOrderBook ('BTC/USD:USDC');
+    unwatch.catch (() => {});
+    await sleep (0);
+    assert.deepStrictEqual (sent[0]['params'], { 'channel': deltasChannel }, 'a market on the deltas feed is unsubscribed from it');
+    exchange.handleMessage (client, reply (sent[0]['id'], { 'channel': deltasChannel }));
+    await unwatch;
+    assert (!(deltasChannel + ':requested' in client.subscriptions), 'the market goes back to the snapshots on its next watch');
+    assert.equal (exchange.orderbooks['BTC/USD:USDC'], undefined, 'the reply clears the book');
+    // a market switching to the deltas feed: its snapshot unsubscribe is in flight, no feed is subscribed
+    const switching = createHarness ();
+    switching.client.subscriptions['order_book.ETH-USD-PERP.deltas:requested'] = true;
+    const switchUnwatch = switching.exchange.unWatchOrderBook ('ETH/USD:USDC');
+    switchUnwatch.catch (() => {});
+    await sleep (0);
+    assert.deepStrictEqual (switching.sent[0]['params'], { 'channel': 'order_book.ETH-USD-PERP.deltas' }, 'a market switching to the deltas feed is unsubscribed from it');
+    switching.client.reject (new Error ('cleanup'));
+}
+
+async function testParadexUnwatchScopedTickers () {
+    const { exchange, client, sent } = createHarness ();
+    const tickers = exchange.watchTickers ([ 'BTC/USD:USDC', 'ETH/USD:USDC' ]);
+    tickers.catch (() => {});
+    await sleep (0);
+    exchange.handleMessage (client, reply (sent[0]['id'], { 'channel': 'markets_summary', 'markets': [ 'BTC-USD-PERP', 'ETH-USD-PERP' ] }));
+    const btc = exchange.watchTicker ('BTC/USD:USDC');
+    btc.catch (() => {});
+    const eth = exchange.watchTicker ('ETH/USD:USDC');
+    eth.catch (() => {});
+    await sleep (0);
+    const removeEth = exchange.unWatchTicker ('ETH/USD:USDC');
+    removeEth.catch (() => {});
+    await sleep (0);
+    assert.deepStrictEqual ([ sent[1]['method'], sent[1]['params'] ], [ 'modify_subscription', { 'channel': 'markets_summary', 'remove': [ 'ETH-USD-PERP' ] } ], 'a market is removed from the scoped subscription in place');
+    exchange.handleMessage (client, reply (sent[1]['id'], { 'channel': 'markets_summary', 'remove': [ 'ETH-USD-PERP' ] }));
+    await removeEth;
+    assert ((await settle (eth)) instanceof ccxt.UnsubscribeError, 'the watcher of the removed market is rejected');
+    assert.equal (await settle (btc), 'pending', 'the watcher of a market still in the filter is not');
+    assert ('markets_summary:scoped' in client.subscriptions, 'the scoped subscription stays');
+    const removeBtc = exchange.unWatchTicker ('BTC/USD:USDC');
+    removeBtc.catch (() => {});
+    await sleep (0);
+    assert.deepStrictEqual ([ sent[2]['method'], sent[2]['params'] ], [ 'unsubscribe', { 'channel': 'markets_summary' } ], 'the last market unsubscribes the channel, an empty filter would stay open');
+    exchange.handleMessage (client, reply (sent[2]['id'], { 'channel': 'markets_summary' }));
+    await removeBtc;
+    assert ((await settle (btc)) instanceof ccxt.UnsubscribeError, 'the unsubscribe of the channel rejects the last watcher');
+    const left = Object.keys (client.subscriptions).filter ((key) => key.indexOf ('markets_summary') === 0);
+    assert.deepStrictEqual (left, [], 'nothing of the scoped subscription is left');
+    // the all-markets subscription has no filter, its watchers are ended without a request
+    const all = createHarness ();
+    const allTickers = all.exchange.watchTickers ();
+    allTickers.catch (() => {});
+    await sleep (0);
+    const one = all.exchange.watchTicker ('SOL/USD:USDC');
+    one.catch (() => {});
+    await sleep (0);
+    assert.equal (await all.exchange.unWatchTicker ('SOL/USD:USDC'), true, 'a market of the all-markets subscription is unwatched locally');
+    assert.equal (all.sent.length, 1, 'no request removes a market from the all-markets subscription');
+    assert ((await settle (one)) instanceof ccxt.UnsubscribeError, 'the watcher of the market is rejected');
+    all.client.reject (new Error ('cleanup'));
+}
+
+async function testParadexUnwatchFundingRate () {
+    const { exchange, client, sent } = createHarness ();
+    const rates = exchange.watchFundingRates ([ 'BTC/USD:USDC' ]);
+    rates.catch (() => {});
+    await sleep (0);
+    const rate = exchange.watchFundingRate ('BTC/USD:USDC');
+    rate.catch (() => {});
+    await sleep (0);
+    assert.equal (sent.length, 2, 'the all-markets and the per-market channels are subscribed');
+    const unwatch = exchange.unWatchFundingRate ('BTC/USD:USDC');
+    unwatch.catch (() => {});
+    await sleep (0);
+    assert.deepStrictEqual (sent[2]['params'], { 'channel': 'funding_data.BTC-USD-PERP' }, 'the per-market channel is unsubscribed');
+    exchange.handleMessage (client, reply (sent[2]['id'], { 'channel': 'funding_data.BTC-USD-PERP' }));
+    await unwatch;
+    assert ((await settle (rate)) instanceof ccxt.UnsubscribeError, 'the watchFundingRate watcher is rejected');
+    assert.equal (await settle (rates), 'pending', 'the watchFundingRates watcher on the all-markets channel is not');
+    assert ('funding_data.BTC/USD:USDC' in client.subscriptions, 'the all-markets subscription stays');
+    client.reject (new Error ('cleanup'));
+}
+
 async function testParadexSubscriptions () {
     await testParadexScopedTickers ();
     await testParadexAllMarketsSummary ();
@@ -329,6 +541,14 @@ async function testParadexSubscriptions () {
     await testParadexOverlappingSubscribes ();
     await testParadexAllMarketsAfterScoped ();
     await testParadexLiquidationsKept ();
+    await testParadexUnwatchRejectsWatchers ();
+    await testParadexUnwatchErrorReply ();
+    await testParadexUnwatchContinuesAfterError ();
+    await testParadexWatchDuringUnwatch ();
+    await testParadexUnwatchTimeout ();
+    await testParadexUnwatchOrderBookFeed ();
+    await testParadexUnwatchScopedTickers ();
+    await testParadexUnwatchFundingRate ();
 }
 
 export default testParadexSubscriptions;
