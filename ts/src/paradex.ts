@@ -1733,7 +1733,7 @@ export default class paradex extends Exchange {
         return token;
     }
 
-    override nonce (): number {
+    override nonce (): int {
         const timeDifference = this.safeInteger (this.options, 'timeDifference', 0);
         return this.parseToInt ((this.milliseconds () - timeDifference) / 1000);
     }
