@@ -34,7 +34,8 @@
             "l1_chain_id": "11155111",
             "liquidation_fee": "0.2"
         },
-        "authToken": "token"
+        "authToken": "token",
+        "serverDeriveAddress": false
     },
     "methods": {
         "fetchFundingRateHistory": [
@@ -141,7 +142,6 @@
                 ],
                 "output": null
             },
-            
             {
                 "description": "mark ohlcv",
                 "method": "fetchOHLCV",
@@ -626,6 +626,24 @@
                     100
                 ],
                 "output": "{\"market\":\"SOL-USD-PERP\",\"side\":\"BUY\",\"type\":\"MARKET\",\"instruction\":\"GTC\",\"size\":\"0.1\",\"signature\":\"[\\\"104565671699689255617045221676213933354547023392637360160424962908972623940\\\",\\\"1024923935778142599387806777674251553503240530550535269897388545298737398098\\\"]\",\"signature_timestamp\":1760000000000}",
+                "disabledRS": true
+            },
+            {
+                "description": "limit buy order fetches the account address from GET /onboarding first",
+                "method": "createOrder",
+                "url": "https://api.prod.paradex.trade/v1/onboarding?account_signer_type=starknet&public_key=0x2be4e975781f8b2b2d1f717ca6b5da4e3b39678d21511479d8dbac732556c29",
+                "input": [
+                    "SOL/USD:USDC",
+                    "limit",
+                    "buy",
+                    0.1,
+                    100
+                ],
+                "options": {
+                    "serverDeriveAddress": true
+                },
+                "disabledGO": true,
+                "disabledJava": true,
                 "disabledRS": true
             }
         ],

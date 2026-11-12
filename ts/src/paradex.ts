@@ -402,6 +402,7 @@ export default class paradex extends Exchange {
             'options': {
                 'paradexAccount': undefined, // add {"privateKey": "copy Paradex Private Key from UI", "publicKey": "used when onboard (optional)", "address": "copy Paradex Address from UI"}
                 'broker': 'CCXT',
+                'serverDeriveAddress': true, // get the account address from GET /onboarding; false computes the legacy proxy-class address locally
             },
             'features': {
                 'spot': {
@@ -1547,6 +1548,27 @@ export default class paradex extends Exchange {
                 this.safeString (systemConfig, 'paraclear_account_hash'),
                 this.safeString (systemConfig, 'paraclear_account_proxy_hash')
             );
+            // the address computed above is the legacy proxy-class address, which is wrong for
+            // accounts created with the current account class; GET /onboarding returns the
+            // stored address of an existing account, and the current-class address for a new one
+            if (this.safeBool (this.options, 'serverDeriveAddress', true)) {
+                const response = await this.publicGetOnboarding ({
+                    'account_signer_type': 'starknet',
+                    'public_key': this.safeString (account, 'publicKey'),
+                });
+                //
+                //     {
+                //         "address": "0x...",
+                //         "exists": true,
+                //         "account_signer_type": "starknet"
+                //     }
+                //
+                const address = this.safeString (response, 'address');
+                if ((address === undefined) || (address.indexOf ('0x') !== 0)) {
+                    throw new ExchangeError (this.id + ' retrieveAccount() GET /onboarding returned no valid account address');
+                }
+                account['address'] = address;
+            }
             this.options['paradexAccount'] = account;
         }
         return this.safeDict (this.options, 'paradexAccount', {});
