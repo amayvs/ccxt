@@ -1502,6 +1502,89 @@ export default class paradex extends Exchange {
         return this.signHash (this.hashMessage (message), privateKey.slice (-64));
     }
 
+    hashPersonalMessage (message: string): string {
+        // EIP-191 personal_sign hash of a text message
+        const binaryMessage = this.encode (message);
+        const prefix = this.binaryConcat (this.base16ToBinary ('19'), this.encode ('Ethereum Signed Message:'), this.base16ToBinary ('0a'), this.encode (this.numberToString (this.binaryLength (binaryMessage))));
+        return '0x' + this.hash (this.binaryConcat (prefix, binaryMessage), keccak, 'hex');
+    }
+
+    toChecksumAddress (address: string): string {
+        // EIP-55 mixed-case address, which SIWE messages require
+        const lower = this.remove0xPrefix (address).toLowerCase ();
+        const hashed = this.hash (this.encode (lower), keccak, 'hex');
+        let result = '0x';
+        for (let i = 0; i < lower.length; i++) {
+            const char = lower[i];
+            if ('89abcdef'.indexOf (hashed[i]) >= 0) {
+                result += char.toUpperCase ();
+            } else {
+                result += char;
+            }
+        }
+        return result;
+    }
+
+    canonicalStarknetAddress (address: string): string {
+        // lowercase hex with the 0x prefix and no leading zeros
+        let digits = this.remove0xPrefix (address).toLowerCase ();
+        while ((digits.length > 1) && (digits[0] === '0')) {
+            digits = digits.slice (1);
+        }
+        return '0x' + digits;
+    }
+
+    siweTime (milliseconds: number): string {
+        // ISO 8601 in UTC, without milliseconds
+        const iso = this.iso8601 (milliseconds) as string;
+        return iso.slice (0, 19) + 'Z';
+    }
+
+    getSiweDomain (): string {
+        const siweDomain = this.safeString (this.options, 'siweDomain');
+        if (siweDomain !== undefined) {
+            return siweDomain;
+        }
+        const apiUrl = this.implodeHostname (this.safeString (this.urls['api'], 'v1', ''));
+        if (apiUrl.indexOf ('api.testnet.') >= 0) {
+            return 'app.testnet.paradex.trade';
+        }
+        if (apiUrl.indexOf ('api.nightly.') >= 0) {
+            return 'app.nightly.paradex.trade';
+        }
+        return 'app.paradex.trade';
+    }
+
+    async buildParentLinkProof (accountAddress: string): Promise<Dict> {
+        // SIWE (EIP-4361) message, signed with personal_sign by the Ethereum wallet,
+        // proving it is the parent of a new Paradex account
+        const systemConfig = await this.getSystemConfig ();
+        const domain = this.getSiweDomain ();
+        const issuedAt = this.milliseconds ();
+        // the statement must contain the word "this", which the transpilers rewrite
+        // inside string literals, so it is built from its bytes
+        const thisWord = this.decode (this.base16ToBinary ('74686973'));
+        const lines = [
+            domain + ' wants you to sign in with your Ethereum account:',
+            this.toChecksumAddress (this.walletAddress),
+            '',
+            'Link ' + thisWord + ' wallet as the parent of Paradex account ' + this.canonicalStarknetAddress (accountAddress) + ' on ' + this.safeString (systemConfig, 'starknet_chain_id'),
+            '',
+            'URI: https://' + domain,
+            'Version: 1',
+            'Chain ID: ' + this.safeString (systemConfig, 'l1_chain_id'),
+            'Nonce: ' + this.randomBytes (16),
+            'Issued At: ' + this.siweTime (issuedAt),
+            'Expiration Time: ' + this.siweTime (this.sum (issuedAt, 300000)),
+        ];
+        const message = lines.join ('\n');
+        const signature = this.signHash (this.hashPersonalMessage (message), this.privateKey);
+        return {
+            'message': this.stringToBase64 (message),
+            'signature': signature,
+        };
+    }
+
     async getSystemConfig (): Promise<Dict> {
         if (this.safeDict (this.options, 'systemConfig') === undefined) {
             const response = await this.publicGetSystemConfig ();
@@ -1590,6 +1673,10 @@ export default class paradex extends Exchange {
         params['signature'] = signature;
         params['account'] = this.safeString (account, 'address');
         params['public_key'] = this.safeString (account, 'publicKey');
+        // an Ethereum wallet creating a new account proves it is the account's parent
+        const parentProof = await this.buildParentLinkProof (this.safeString (account, 'address') as string);
+        params['parentSiweMessage'] = this.safeString (parentProof, 'message');
+        params['parentSignature'] = this.safeString (parentProof, 'signature');
         const response = await this.privatePostOnboarding (params);
         return response;
     }
@@ -3685,6 +3772,11 @@ export default class paradex extends Exchange {
                 privateHeaders['PARADEX-STARKNET-ACCOUNT'] = this.safeString (query, 'account');
                 privateHeaders['PARADEX-STARKNET-SIGNATURE'] = this.safeString (query, 'signature');
                 privateHeaders['PARADEX-TIMESTAMP'] = this.numberToString (this.nonce ());
+                const parentSiweMessage = this.safeString (query, 'parentSiweMessage');
+                if (parentSiweMessage !== undefined) {
+                    privateHeaders['PARADEX-PARENT-SIWE-MESSAGE'] = parentSiweMessage;
+                    privateHeaders['PARADEX-PARENT-SIGNATURE'] = this.safeString (query, 'parentSignature');
+                }
                 privateHeaders['Content-Type'] = 'application/json';
                 privateBody = this.json ({
                     'public_key': this.safeString (query, 'public_key'),
